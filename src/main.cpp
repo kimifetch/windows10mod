@@ -204,7 +204,7 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
                     MyComputer();
                 }
                 repeat = true;
-                return true;
+                return 1;
             }
 
         }
@@ -315,14 +315,15 @@ LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam)
             int zDelta = GET_WHEEL_DELTA_WPARAM(pmouse->mouseData);
 
             //修正按键
-            if(GetAsyncKeyState(VK_SHIFT) & 0x8000) fwKeys |= MK_SHIFT;
-            if(GetAsyncKeyState(VK_CONTROL) & 0x8000) fwKeys |= MK_CONTROL;
-            if(GetAsyncKeyState(VK_LBUTTON) & 0x8000) fwKeys |= MK_LBUTTON;
-            if(GetAsyncKeyState(VK_RBUTTON) & 0x8000) fwKeys |= MK_RBUTTON;
-            if(GetAsyncKeyState(VK_MBUTTON) & 0x8000) fwKeys |= MK_MBUTTON;
+            if(GetAsyncKeyState(VK_SHIFT) & KEY_PRESSED) fwKeys |= MK_SHIFT;
+            if(GetAsyncKeyState(VK_CONTROL) & KEY_PRESSED) fwKeys |= MK_CONTROL;
+            if(GetAsyncKeyState(VK_LBUTTON) & KEY_PRESSED) fwKeys |= MK_LBUTTON;
+            if(GetAsyncKeyState(VK_RBUTTON) & KEY_PRESSED) fwKeys |= MK_RBUTTON;
+            if(GetAsyncKeyState(VK_MBUTTON) & KEY_PRESSED) fwKeys |= MK_MBUTTON;
 
             //发送消息，并且退出消息循环
             PostMessage(WindowFromPoint(pmouse->pt), WM_MOUSEWHEEL, MAKELONG(fwKeys, zDelta), MAKELPARAM(pmouse->pt.x, pmouse->pt.y));
+            return 1;
         }
     }
 
