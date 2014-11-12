@@ -1,5 +1,6 @@
 #define _WIN32_WINNT 0x600
 #include <windows.h>
+#include <shlwapi.h>
 //#include <conio.h>
 
 typedef struct
@@ -11,8 +12,13 @@ typedef struct
     bool vertical;
 } HideSearch;
 
-wchar_t HideSearchStop[] = L"HideSearchStop";
+wchar_t HideSearchName[] = L"HideSearch";
+wchar_t HideSearchTemp[] = L"{34232677-86DE-48eb-ABD7-E5E481CBC513}";
+wchar_t HideSearchStop[] = L"{E51E43C3-9F1C-44e5-813E-7F5B2E69DD4A}";
 
+#ifndef GET_KEYSTATE_WPARAM
+#define GET_KEYSTATE_WPARAM(wParam)     (LOWORD(wParam))
+#endif
 
 int GetWidth(const RECT &rect)
 {
@@ -174,8 +180,8 @@ BOOL IsFullScreen()
     POINT right_top = {GetSystemMetrics(SM_CXSCREEN), 0};
     POINT right_bottom = {GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)};
     return WindowFromPoint(left_top)==WindowFromPoint(left_bottom) &&
-        WindowFromPoint(left_top)==WindowFromPoint(right_top) &&
-        WindowFromPoint(left_top)==WindowFromPoint(right_bottom);
+           WindowFromPoint(left_top)==WindowFromPoint(right_top) &&
+           WindowFromPoint(left_top)==WindowFromPoint(right_bottom);
 }
 
 #define KEY_PRESSED 0x8000
@@ -299,9 +305,90 @@ LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam)
                 }
             }
         }
+
+        if (wParam==WM_MOUSEWHEEL)
+        {
+            MSLLHOOKSTRUCT *pmouse = (MSLLHOOKSTRUCT *)lParam;
+
+            //获得按键和方向
+            int fwKeys = GET_KEYSTATE_WPARAM(pmouse->mouseData);
+            int zDelta = GET_WHEEL_DELTA_WPARAM(pmouse->mouseData);
+
+            //修正按键
+            if(GetAsyncKeyState(VK_SHIFT) & 0x8000) fwKeys |= MK_SHIFT;
+            if(GetAsyncKeyState(VK_CONTROL) & 0x8000) fwKeys |= MK_CONTROL;
+            if(GetAsyncKeyState(VK_LBUTTON) & 0x8000) fwKeys |= MK_LBUTTON;
+            if(GetAsyncKeyState(VK_RBUTTON) & 0x8000) fwKeys |= MK_RBUTTON;
+            if(GetAsyncKeyState(VK_MBUTTON) & 0x8000) fwKeys |= MK_MBUTTON;
+
+            //发送消息，并且退出消息循环
+            PostMessage(WindowFromPoint(pmouse->pt), WM_MOUSEWHEEL, MAKELONG(fwKeys, zDelta), MAKELPARAM(pmouse->pt.x, pmouse->pt.y));
+        }
     }
 
     return CallNextHookEx(keyboard_hook, nCode, wParam, lParam );
+}
+
+void GetPrettyPath(wchar_t *path)
+{
+    wchar_t temp[MAX_PATH];
+    GetModuleFileName(NULL, temp, MAX_PATH);
+    PathCanonicalize(path, temp);
+    PathQuoteSpaces(path);
+}
+
+bool IsAutoRun()
+{
+    HKEY hKey;
+    if(RegOpenKeyEx(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_QUERY_VALUE, &hKey)==ERROR_SUCCESS)
+    {
+        wchar_t buffer[MAX_PATH];
+        DWORD dwLength = MAX_PATH;
+        if(RegQueryValueEx(hKey, HideSearchName, NULL, NULL, (LPBYTE)buffer, &dwLength)==ERROR_SUCCESS)
+        {
+            RegCloseKey(hKey);
+
+            wchar_t path[MAX_PATH];
+            GetPrettyPath(path);
+
+            if (wcsicmp(path, buffer) == 0)
+            {
+                return true;
+            }
+        }
+        else
+        {
+            RegCloseKey(hKey);
+        }
+    }
+
+    return false;
+}
+
+void ChangeAutoRun()
+{
+    HKEY hKey;
+    RegOpenKeyEx(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_ALL_ACCESS, &hKey);
+    if (!IsAutoRun())
+    {
+        wchar_t path[MAX_PATH];
+        GetPrettyPath(path);
+        if (wcsstr(path, L"Temp") != NULL)
+        {
+            if (MessageBox(NULL, L"您正在临时文件夹中运行本软件，不建议启用开机自动启动。\n您如果依然想要开机启动，请选择 是。", L"提示", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) == IDNO)
+            {
+                RegCloseKey(hKey);
+                return;
+            }
+        }
+
+        RegSetValueEx(hKey, HideSearchName, 0, REG_SZ, (LPBYTE)path, wcslen(path)*sizeof(wchar_t));
+    }
+    else
+    {
+        RegDeleteValue(hKey, HideSearchName);
+    }
+    RegCloseKey(hKey);
 }
 
 int WINAPI WinMain (HINSTANCE hInstance,
@@ -313,17 +400,21 @@ int WINAPI WinMain (HINSTANCE hInstance,
     //_cprintf("%d %d\n", GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
     ImmDisableIME(-1);
 
-    HANDLE hMutex = CreateMutex(NULL, TRUE, L"HideSearch");
+    HANDLE hMutex = CreateMutex(NULL, TRUE, HideSearchName);
     if (GetLastError() == ERROR_ALREADY_EXISTS)
     {
         CloseHandle(hMutex);
-        CreateMutex(NULL, TRUE, L"HideSearchTemp");
+        CreateMutex(NULL, TRUE, HideSearchTemp);
         if (GetLastError() != ERROR_ALREADY_EXISTS)
         {
-            if(MessageBox(0, L"您是否要退出程序？", L"提示", MB_YESNO)==IDYES)
+            if(MessageBox(0, IsAutoRun()?L"您是否要停止使用程序，并取消开机启动？":L"您是否要停止使用程序？", L"提示", MB_YESNO)==IDYES)
             {
                 CreateMutex(NULL, TRUE, HideSearchStop);
                 Sleep(200);
+                if (IsAutoRun())
+                {
+                    ChangeAutoRun();
+                }
             }
         }
         return 0;
@@ -337,6 +428,14 @@ int WINAPI WinMain (HINSTANCE hInstance,
     {
         MessageBox(0, L"本工具只用于Windows 10。http://www.shuax.com", L"提示", 0);
         return 0;
+    }
+
+    if (!IsAutoRun())
+    {
+        if (MessageBox(NULL, L"您是否要启用开机自动启动？", L"提示", MB_YESNO | MB_ICONQUESTION) == IDYES)
+        {
+            ChangeAutoRun();
+        }
     }
 
     HideSearch param = {0};
@@ -358,17 +457,6 @@ int WINAPI WinMain (HINSTANCE hInstance,
         MessageBox(0, tips, L"提示", 0);
         return 0;
     }
-    //return 0;
-
-    /*
-    #define MOD_NOREPEAT 0x4000
-    int ret = RegisterHotKey(NULL, 0, MOD_CONTROL | MOD_NOREPEAT , 'E');
-    if(ret==0)
-    {
-        MessageBox(0,L"注册Ctrl+E热键失败，你不能通过按下Ctrl+E打开我的电脑", L"提示", 0);
-    }
-    */
-    //UINT TaskbarCreated = RegisterWindowMessage(L"TaskbarCreated");
 
     keyboard_hook = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, hInstance, 0);
     mouse_hook = SetWindowsHookEx(WH_MOUSE_LL, LowLevelMouseProc, hInstance, 0);

@@ -18,7 +18,8 @@
 				</Compiler>
 				<Linker>
 					<Add option="-s" />
-					<Add library="Imm32" />
+					<Add library="imm32" />
+					<Add library="shlwapi" />
 				</Linker>
 			</Target>
 		</Build>
